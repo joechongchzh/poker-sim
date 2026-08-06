@@ -252,7 +252,7 @@ function makeBrain(P){
         const play=c>=P.openChen||Math.random()<P.openRand;
         if(!play)return{a:'fold'};
         if(c>=P.alwaysRaiseChen||Math.random()<P.pfrShare)
-          return{a:'raise',to:Math.round((2.5+Math.random()*1.5+ctx.limpers*1+(P.bigOpen?1.5:0))*ctx.bb)};
+          return{a:'raise',to:Math.round((2.5+Math.random()*1.5+ctx.limpers*1+(P.bigOpen?1.5:0)+(P.openJitter&&Math.random()<0.15?Math.random()*P.openJitter:0))*ctx.bb)};
         return P.canLimp?{a:'call'}:{a:'raise',to:Math.round((2.5+Math.random())*ctx.bb)};
       }
       if(ctx.raises===1){
@@ -277,8 +277,8 @@ function makeBrain(P){
         const canBluff=ctx.numActive<=2||Math.random()<0.3;
         const isRiver=ctx.street==='river';
         const wantValue=isRiver?A.score>=P.riverValueAt:A.score>=P.valueBetAt;
-        const bluffP=isRiver?P.riverBluff:(ctx.isAggressor?P.cbet:P.stab);
-        const semi=!isRiver&&A.draw>=0.1&&Math.random()<P.semibluff;
+        const bluffP=(isRiver?P.riverBluff:(ctx.isAggressor?P.cbet:P.stab))+(ctx.street==='turn'?(P.turnAggro||0):0);
+        const semi=!isRiver&&A.draw>=0.1&&Math.random()<P.semibluff+(ctx.street==='turn'?(P.turnAggro||0)*0.5:0);
         const midCbet=!isRiver&&ctx.isAggressor&&A.score>=0.35&&Math.random()<P.cbet*0.55;
         if(wantValue||semi||midCbet||(A.score<0.35&&canBluff&&Math.random()<bluffP)){
           const frac=P.size?P.size(A,ctx.street):pickSizeWild(A,ctx.street);
@@ -287,7 +287,8 @@ function makeBrain(P){
         }
         return{a:'check'};
       }
-      const req=ctx.toCall/(ctx.pot+ctx.toCall);
+      const effCall=Math.min(ctx.toCall,ctx.stack); /* 赔率按实际可付金额(有效后手)算 */
+      const req=effCall/(ctx.pot+effCall);
       if(ctx.canRaise&&s>=P.raiseAt&&Math.random()<P.raiseFreq)
         return{a:'raise',to:Math.round(ctx.currentBet*2.6+ctx.pot*0.2)};
       if(ctx.canRaise&&ctx.street!=='river'&&A.score>=0.62&&Math.random()<P.raiseFreq*0.25)
@@ -297,6 +298,9 @@ function makeBrain(P){
       if(ctx.canRaise&&ctx.street!=='river'&&A.score<0.4&&A.draw<0.1&&ctx.numActive===2&&ctx.betRatio<=0.6&&Math.random()<P.bluffRaise)
         return{a:'raise',to:Math.round(ctx.currentBet*3+ctx.pot*0.2)};
       let slack=P.slack;
+      if(ctx.street==='flop'&&P.flopFloat)slack-=P.flopFloat;
+      if(ctx.street==='turn')slack+=(P.turnTighten||0);
+      if(ctx.street==='river')slack+=(P.riverTighten||0);
       if(ctx.betRatio>=0.7)slack+=P.bigBetTighten;
       if(ctx.betRatio>=1.2)slack+=P.bigBetTighten;
       slack+=(p.barrelsCalled||0)*0.06;
@@ -309,29 +313,37 @@ function makeBrain(P){
     }
   };
 }
+/* 参数标定依据 20260806 场 308 手真实数据（详见复盘）:
+   Terry: VPIP74/PFR23/Limp32/3B13/F3B31 | CBet47但迷你注 | FvCB60(fit-or-fold) | 追听不看赔率 |
+          面对≥70%pot弃63%(34/54) | 河牌两极轰炸100-308%pot(价值+诈唬混合,#72爆听141%,#129 273%) | 开池2-13.8bb飘忽
+   嗯哼: VPIP48/PFR20/Limp12/3B12/F3B8 | CBet仅49,FvCB32(翻牌爱float) | 转牌是主战街(75%pot连开+combo听超池raise+诈唬) |
+          面对大注弃64%(23/36) | 河牌面对大注弃12/19(可被诈) | 跟大注=有货(W$SD83)
+   xiao: VPIP47/PFR13/Limp18/F3B0 | CBet82%且尺度焊死74-75%(范围合并:顶对/空气/弱对同尺度) |
+          翻后raise率1.7%(=怪物或大听) | bet-fold倾向(#146/#180被反加即弃) | 河大注=成牌 */
 const PROFILES={
-  Terry:{openChen:3.5,openRand:0.55,pfrShare:0.38,alwaysRaiseChen:10,canLimp:true,trapAA:true,bigOpen:false,
-    threeBetChen:9.5,threeBetFreq:0.45,callChen:3.2,sizeElastic:0.10,call3Chen:6,sticky3:0.4,
-    cbet:0.59,stab:0.34,semibluff:0.5,drawRaise:0.30,wildDraw:true,valueBetAt:0.58,riverValueAt:0.60,riverBluff:0.10,
-    slack:-0.14,bigBetTighten:0.10,raiseAt:0.76,raiseFreq:0.55,riverBigCallAt:0.48,drawWeight:1.35,
-    bluffRaise:0.07,size:null},
-  '嗯哼':{openChen:6.2,openRand:0.13,pfrShare:0.55,alwaysRaiseChen:9,canLimp:true,trapAA:false,bigOpen:false,
-    threeBetChen:9,threeBetFreq:0.6,callChen:4.8,sizeElastic:0.25,call3Chen:6,sticky3:0.7,
-    cbet:0.77,stab:0.18,semibluff:0.35,drawRaise:0.04,valueBetAt:0.60,riverValueAt:0.60,riverBluff:0.02,
-    slack:-0.20,bigBetTighten:0.14,raiseAt:0.78,raiseFreq:0.6,riverBigCallAt:0.44,drawWeight:1.0,
-    bluffRaise:0.02,size:(A,st)=>0.5+Math.random()*0.3},
+  Terry:{openChen:3.2,openRand:0.62,pfrShare:0.32,alwaysRaiseChen:10,canLimp:true,trapAA:true,bigOpen:false,openJitter:9,
+    threeBetChen:5.5,threeBetFreq:0.5,callChen:2.8,sizeElastic:0.08,call3Chen:6,sticky3:0.55,
+    cbet:0.47,stab:0.30,semibluff:0.5,drawRaise:0.25,wildDraw:true,valueBetAt:0.55,riverValueAt:0.58,riverBluff:0.22,
+    slack:0.0,riverTighten:0.10,bigBetTighten:0.20,raiseAt:0.76,raiseFreq:0.5,riverBigCallAt:0.75,drawWeight:1.35,
+    bluffRaise:0.05,
+    size:(A,st)=>st==='flop'?0.15+Math.random()*0.35:st==='turn'?0.5+Math.random()*0.5:(A.score>=0.8||A.score<0.35?1.0+Math.random()*1.8:0.5+Math.random()*0.3)},
+  '嗯哼':{openChen:6.0,openRand:0.25,pfrShare:0.6,alwaysRaiseChen:9,canLimp:true,trapAA:false,bigOpen:false,openJitter:6,
+    threeBetChen:6,threeBetFreq:0.6,callChen:3.8,sizeElastic:0.2,call3Chen:5.5,sticky3:0.9,
+    cbet:0.48,stab:0.15,turnAggro:0.30,semibluff:0.55,drawRaise:0.22,wildDraw:true,valueBetAt:0.58,riverValueAt:0.62,riverBluff:0.06,
+    slack:-0.10,flopFloat:0.06,turnTighten:0.08,riverTighten:0.22,bigBetTighten:0.22,raiseAt:0.80,raiseFreq:0.4,riverBigCallAt:0.60,drawWeight:1.1,
+    bluffRaise:0.05,size:(A,st)=>st==='turn'?0.72+Math.random()*0.06:0.5+Math.random()*0.3},
   '高进':{openChen:6.5,openRand:0.12,pfrShare:1.0,alwaysRaiseChen:6.5,canLimp:false,trapAA:false,bigOpen:true,
-    threeBetChen:9.4,threeBetFreq:0.55,callChen:6.8,sizeElastic:0.3,call3Chen:7,sticky3:0.6,
-    cbet:0.68,stab:0.40,semibluff:0.3,drawRaise:0.08,valueBetAt:0.62,riverValueAt:0.76,riverBluff:0.03,
-    slack:-0.02,bigBetTighten:0.16,raiseAt:0.78,raiseFreq:0.55,riverBigCallAt:0.62,drawWeight:1.0,
+    threeBetChen:7.5,threeBetFreq:0.55,callChen:6.8,sizeElastic:0.3,call3Chen:7,sticky3:0.9,
+    cbet:0.72,stab:0.40,semibluff:0.3,drawRaise:0.08,valueBetAt:0.62,riverValueAt:0.76,riverBluff:0.03,
+    slack:-0.02,riverTighten:0.16,bigBetTighten:0.16,raiseAt:0.78,raiseFreq:0.55,riverBigCallAt:0.62,drawWeight:1.0,
     bluffRaise:0.06,
     size:(A,st)=>st==='flop'?0.5:(A.score>=0.75?1.0+Math.random()*0.35:0.5)},
-  xiao:{openChen:5.2,openRand:0.26,pfrShare:0.12,alwaysRaiseChen:10.5,canLimp:true,trapAA:false,bigOpen:false,
-    threeBetChen:10,threeBetFreq:0.3,callChen:3.9,sizeElastic:0.12,call3Chen:6.5,sticky3:0.5,
-    cbet:0.45,stab:0.20,semibluff:0.2,drawRaise:0.02,valueBetAt:0.62,riverValueAt:0.66,riverBluff:0.02,
-    slack:-0.10,bigBetTighten:0.16,raiseAt:0.82,raiseFreq:0.5,riverBigCallAt:0.50,drawWeight:1.0,
+  xiao:{openChen:5.4,openRand:0.24,pfrShare:0.45,alwaysRaiseChen:10.5,canLimp:true,trapAA:false,bigOpen:false,
+    threeBetChen:9,threeBetFreq:0.25,callChen:3.6,sizeElastic:0.10,call3Chen:6,sticky3:0.95,
+    cbet:0.82,stab:0.32,semibluff:0.35,drawRaise:0.05,wildDraw:true,valueBetAt:0.50,riverValueAt:0.55,riverBluff:0.08,
+    slack:0.0,riverTighten:0.18,bigBetTighten:0.12,raiseAt:0.85,raiseFreq:0.15,riverBigCallAt:0.50,drawWeight:1.0,
     bluffRaise:0.02,
-    size:(A,st)=>0.4+Math.random()*0.25},
+    size:()=>0.72+Math.random()*0.06},
   yq:{openChen:5.8,openRand:0.22,pfrShare:0.45,alwaysRaiseChen:8.5,canLimp:true,trapAA:false,bigOpen:false,
     threeBetChen:9.2,threeBetFreq:0.5,callChen:4.8,sizeElastic:0.22,call3Chen:7,sticky3:0.3,
     cbet:0.41,stab:0.25,semibluff:0.35,drawRaise:0.08,valueBetAt:0.62,riverValueAt:0.70,riverBluff:0.04,
@@ -505,7 +517,7 @@ async function bettingRound(startIdx,st){
     curActor=p;render();
     let dec;
     const potBefore=pot;
-    const betRatio=lastAggr?lastAggr.addAmt/Math.max(lastAggr.potBefore,1):0;
+    const betRatio=lastAggr?Math.min(lastAggr.addAmt,Math.min(toCall,p.stack))/Math.max(lastAggr.potBefore,1):0; /* 面对的下注cap到自己有效后手 */
     if(p.isHero&&autoHands<=0){
       dec=await heroDecide({toCall,canRaise,maxTo,potBefore});
     }else{
