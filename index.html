@@ -283,13 +283,19 @@ function makeBrain(P){
       const req=ctx.toCall/(ctx.pot+ctx.toCall);
       if(ctx.canRaise&&s>=P.raiseAt&&Math.random()<P.raiseFreq)
         return{a:'raise',to:Math.round(ctx.currentBet*2.6+ctx.pot*0.2)};
+      if(ctx.canRaise&&ctx.street!=='river'&&A.score>=0.62&&Math.random()<P.raiseFreq*0.25)
+        return{a:'raise',to:Math.round(ctx.currentBet*2.4+ctx.pot*0.15)};
       if(ctx.canRaise&&ctx.street!=='river'&&(A.fd||A.oesd)&&A.score<0.6&&Math.random()<P.drawRaise)
         return{a:'raise',to:Math.round(ctx.currentBet*(2.6+Math.random()*(P.wildDraw?3:0.6)))};
+      if(ctx.canRaise&&ctx.street!=='river'&&A.score<0.4&&A.draw<0.1&&ctx.numActive===2&&ctx.betRatio<=0.6&&Math.random()<P.bluffRaise)
+        return{a:'raise',to:Math.round(ctx.currentBet*3+ctx.pot*0.2)};
       let slack=P.slack;
-      if(ctx.betRatio>=0.9)slack+=P.bigBetTighten;
+      if(ctx.betRatio>=0.7)slack+=P.bigBetTighten;
+      if(ctx.betRatio>=1.2)slack+=P.bigBetTighten;
+      slack+=(p.barrelsCalled||0)*0.06;
       if(ctx.numActive>2)slack+=0.03;
       if(ctx.street==='river'&&ctx.betRatio>=0.7&&s<P.riverBigCallAt)return{a:'fold'};
-      if(s>=req+slack)return{a:'call'};
+      if(s>=req+slack){if(ctx.betRatio>=0.6)p.barrelsCalled=(p.barrelsCalled||0)+1;return{a:'call'};}
       if(ctx.street!=='river'&&A.draw>=0.1&&req<=0.31)return{a:'call'};
       if(ctx.street!=='river'&&A.gut&&req<=0.16)return{a:'call'};
       return{a:'fold'};
@@ -298,28 +304,32 @@ function makeBrain(P){
 }
 const PROFILES={
   Terry:{openChen:3.5,openRand:0.55,pfrShare:0.38,alwaysRaiseChen:10,canLimp:true,trapAA:true,bigOpen:false,
-    threeBetChen:10,threeBetFreq:0.45,callChen:3.2,sizeElastic:0.10,call3Chen:6,sticky3:0.4,
+    threeBetChen:9.5,threeBetFreq:0.45,callChen:3.2,sizeElastic:0.10,call3Chen:6,sticky3:0.4,
     cbet:0.59,stab:0.34,semibluff:0.5,drawRaise:0.30,wildDraw:true,valueBetAt:0.58,riverValueAt:0.60,riverBluff:0.10,
-    slack:-0.14,bigBetTighten:0.02,raiseAt:0.80,raiseFreq:0.55,riverBigCallAt:0.48,drawWeight:1.35,size:null},
+    slack:-0.14,bigBetTighten:0.10,raiseAt:0.76,raiseFreq:0.55,riverBigCallAt:0.48,drawWeight:1.35,
+    bluffRaise:0.07,size:null},
   '嗯哼':{openChen:6.2,openRand:0.13,pfrShare:0.55,alwaysRaiseChen:9,canLimp:true,trapAA:false,bigOpen:false,
-    threeBetChen:9.2,threeBetFreq:0.6,callChen:4.8,sizeElastic:0.25,call3Chen:6,sticky3:0.7,
+    threeBetChen:9,threeBetFreq:0.6,callChen:4.8,sizeElastic:0.25,call3Chen:6,sticky3:0.7,
     cbet:0.77,stab:0.18,semibluff:0.35,drawRaise:0.04,valueBetAt:0.60,riverValueAt:0.60,riverBluff:0.02,
-    slack:-0.20,bigBetTighten:0.04,raiseAt:0.82,raiseFreq:0.6,riverBigCallAt:0.44,drawWeight:1.0,
-    size:(A,st)=>0.5+Math.random()*0.3},
+    slack:-0.20,bigBetTighten:0.14,raiseAt:0.78,raiseFreq:0.6,riverBigCallAt:0.44,drawWeight:1.0,
+    bluffRaise:0.02,size:(A,st)=>0.5+Math.random()*0.3},
   '高进':{openChen:6.5,openRand:0.12,pfrShare:1.0,alwaysRaiseChen:6.5,canLimp:false,trapAA:false,bigOpen:true,
-    threeBetChen:9.8,threeBetFreq:0.55,callChen:6.8,sizeElastic:0.3,call3Chen:7,sticky3:0.6,
+    threeBetChen:9.4,threeBetFreq:0.55,callChen:6.8,sizeElastic:0.3,call3Chen:7,sticky3:0.6,
     cbet:0.68,stab:0.40,semibluff:0.3,drawRaise:0.08,valueBetAt:0.62,riverValueAt:0.76,riverBluff:0.03,
-    slack:-0.02,bigBetTighten:0.10,raiseAt:0.80,raiseFreq:0.55,riverBigCallAt:0.62,drawWeight:1.0,
+    slack:-0.02,bigBetTighten:0.16,raiseAt:0.78,raiseFreq:0.55,riverBigCallAt:0.62,drawWeight:1.0,
+    bluffRaise:0.06,
     size:(A,st)=>st==='flop'?0.5:(A.score>=0.75?1.0+Math.random()*0.35:0.5)},
   xiao:{openChen:5.2,openRand:0.26,pfrShare:0.12,alwaysRaiseChen:10.5,canLimp:true,trapAA:false,bigOpen:false,
-    threeBetChen:10.5,threeBetFreq:0.3,callChen:3.9,sizeElastic:0.12,call3Chen:6.5,sticky3:0.5,
+    threeBetChen:10,threeBetFreq:0.3,callChen:3.9,sizeElastic:0.12,call3Chen:6.5,sticky3:0.5,
     cbet:0.45,stab:0.20,semibluff:0.2,drawRaise:0.02,valueBetAt:0.62,riverValueAt:0.66,riverBluff:0.02,
-    slack:-0.10,bigBetTighten:0.12,raiseAt:0.88,raiseFreq:0.5,riverBigCallAt:0.50,drawWeight:1.0,
+    slack:-0.10,bigBetTighten:0.16,raiseAt:0.82,raiseFreq:0.5,riverBigCallAt:0.50,drawWeight:1.0,
+    bluffRaise:0.02,
     size:(A,st)=>0.4+Math.random()*0.25},
   yq:{openChen:5.8,openRand:0.22,pfrShare:0.45,alwaysRaiseChen:8.5,canLimp:true,trapAA:false,bigOpen:false,
-    threeBetChen:9.5,threeBetFreq:0.5,callChen:4.8,sizeElastic:0.22,call3Chen:7,sticky3:0.3,
+    threeBetChen:9.2,threeBetFreq:0.5,callChen:4.8,sizeElastic:0.22,call3Chen:7,sticky3:0.3,
     cbet:0.41,stab:0.25,semibluff:0.35,drawRaise:0.08,valueBetAt:0.62,riverValueAt:0.70,riverBluff:0.04,
-    slack:0.05,bigBetTighten:0.08,raiseAt:0.82,raiseFreq:0.55,riverBigCallAt:0.66,drawWeight:1.0,
+    slack:0.05,bigBetTighten:0.14,raiseAt:0.80,raiseFreq:0.55,riverBigCallAt:0.66,drawWeight:1.0,
+    bluffRaise:0.04,
     size:(A,st)=>0.5+Math.random()*0.3},
 };
 /* ============ 玩家与状态 ============ */
@@ -424,7 +434,7 @@ async function playHand(){
     }
     pendingSeat=0;
   }
-  players.forEach(p=>{p.folded=false;p.allin=false;p.streetInv=0;p.totalInv=0;p.acted=false;p.trap=false;p.lastAct='';});
+  players.forEach(p=>{p.folded=false;p.allin=false;p.streetInv=0;p.totalInv=0;p.acted=false;p.trap=false;p.barrelsCalled=0;p.lastAct='';});
   board=[];pot=0;street='preflop';deck=newDeck();
   const heroStart=HERO.stack;
   const dealer=players[dealerIdx];
