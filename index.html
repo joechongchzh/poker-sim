@@ -681,14 +681,30 @@ function exportCSV(){
   }
   return out;
 }
-$('btnExport').onclick=()=>{
+$('btnExport').onclick=async()=>{
   if(!logs.length)return;
-  const blob=new Blob([exportCSV()],{type:'text/csv;charset=utf-8'});
+  const csv=exportCSV();
+  const d=new Date();
+  const name=`poker_sim_log_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}${String(d.getMinutes()).padStart(2,'0')}.csv`;
+  const mobile=matchMedia('(pointer:coarse)').matches;
+  if(mobile&&navigator.canShare){
+    const file=new File([csv],name,{type:'text/csv'});
+    if(navigator.canShare({files:[file]})){
+      try{await navigator.share({files:[file],title:name});exportedUpTo=logs.length;render();}catch(e){/* 用户取消分享则不标记已导出 */}
+      return;
+    }
+  }
+  if(mobile&&!navigator.canShare){/* 微信等内置浏览器：无下载也无分享API */
+    try{await navigator.clipboard.writeText(csv);alert('当前浏览器无法直接存文件，CSV已复制到剪贴板。建议点右上角"在浏览器打开"后重新导出。');exportedUpTo=logs.length;render();}
+    catch(e){alert('导出失败：请用系统浏览器(Safari/Chrome)打开本页再导出。');}
+    return;
+  }
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  const d=new Date();
-  a.download=`poker_sim_log_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}${String(d.getMinutes()).padStart(2,'0')}.csv`;
-  a.click();
+  a.download=name;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
   exportedUpTo=logs.length;render();
 };
 window.addEventListener('beforeunload',e=>{
