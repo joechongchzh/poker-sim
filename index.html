@@ -264,11 +264,15 @@ function makeBrain(P){
         if(pocket&&ctx.stack/Math.max(ctx.toCall,1)>=13)return{a:'call'};
         return{a:'fold'};
       }
-      /* 面对3bet+：这桌几乎没人弃(F3B≈16%) */
+      /* 面对3bet+：这桌几乎没人弃(F3B≈16%)——但黏性只在常规尺度(≤18bb)成立。
+         超常规尺度按牌力×价格收紧: 每超1bb门槛+0.25 chen(30bb挤压≈JJ/AK+, 60bb+≈KK+),
+         上限cap在15(KK/AA对任何尺度都能继续); 杂牌sticky兜底仅限≤18bb
+         (修: 曾出现K3o/QJo冷跟100bb 4bet挤压) */
+      const penalty3=Math.max(0,bbm-12)*0.25;
       if(c>=12&&Math.random()<0.5)return{a:'raise',to:Math.round(ctx.currentBet*2.6)};
-      if(c>=P.call3Chen)return{a:'call'};
+      if(c>=Math.min(P.call3Chen+penalty3,15))return{a:'call'};
       if(pocket&&ctx.stack/Math.max(ctx.toCall,1)>=13)return{a:'call'};
-      return Math.random()<P.sticky3?{a:'call'}:{a:'fold'};
+      return bbm<=18&&Math.random()<P.sticky3?{a:'call'}:{a:'fold'};
     },
     post(p,ctx){
       const A=analyze(p.hole,ctx.board);
@@ -289,6 +293,9 @@ function makeBrain(P){
       }
       const effCall=Math.min(ctx.toCall,ctx.stack); /* 赔率按实际可付金额(有效后手)算 */
       const req=effCall/(ctx.pot+effCall);
+      /* 听牌按单街真实权益×隐含赔率系数比价(修: 原硬编码req≤0.31/0.16会用裸听牌/卡顺追赔率不足的注) */
+      const dEq=(A.fd?(A.nfd?0.20:0.19):0)+(A.oesd?0.17:A.gut?0.085:0);
+      const drawOk=ctx.street!=='river'&&dEq>0&&req<=dEq*(ctx.street==='flop'?1.35:1.1);
       if(ctx.canRaise&&s>=P.raiseAt&&Math.random()<P.raiseFreq)
         return{a:'raise',to:Math.round(ctx.currentBet*2.6+ctx.pot*0.2)};
       if(ctx.canRaise&&ctx.street!=='river'&&A.score>=0.62&&Math.random()<P.raiseFreq*0.25)
@@ -305,51 +312,67 @@ function makeBrain(P){
       if(ctx.betRatio>=1.2)slack+=P.bigBetTighten;
       slack+=(p.barrelsCalled||0)*0.06;
       if(ctx.numActive>2)slack+=0.03;
+      if(ctx.facedRaise){ /* 面对raise(非首注): 对手范围强一档(修: 曾在大锅里用顶对/中对跟超pot raise) */
+        slack+=0.12;
+        if(!drawOk){
+          if(ctx.betRatio>=0.9&&s<0.70)return{a:'fold'};        /* 超pot raise: 两对/超对以下放弃 */
+          if(effCall>=40*ctx.bb&&A.score<0.62)return{a:'fold'}; /* 大额raise跟注需顶对好踢以上(防大锅req失真) */
+        }
+      }
       if(ctx.street==='river'&&ctx.betRatio>=0.7&&s<P.riverBigCallAt)return{a:'fold'};
       if(s>=req+slack){if(ctx.betRatio>=0.6)p.barrelsCalled=(p.barrelsCalled||0)+1;return{a:'call'};}
-      if(ctx.street!=='river'&&A.draw>=0.1&&req<=0.31)return{a:'call'};
-      if(ctx.street!=='river'&&A.gut&&req<=0.16)return{a:'call'};
+      if(drawOk)return{a:'call'};
       return{a:'fold'};
     }
   };
 }
-/* 参数标定依据 20260806 场 308 手真实数据（详见复盘）:
-   Terry: VPIP74/PFR23/Limp32/3B13/F3B31 | CBet47但迷你注 | FvCB60(fit-or-fold) | 追听不看赔率 |
-          面对≥70%pot弃63%(34/54) | 河牌两极轰炸100-308%pot(价值+诈唬混合,#72爆听141%,#129 273%) | 开池2-13.8bb飘忽
-   嗯哼: VPIP48/PFR20/Limp12/3B12/F3B8 | CBet仅49,FvCB32(翻牌爱float) | 转牌是主战街(75%pot连开+combo听超池raise+诈唬) |
-          面对大注弃64%(23/36) | 河牌面对大注弃12/19(可被诈) | 跟大注=有货(W$SD83)
-   xiao: VPIP47/PFR13/Limp18/F3B0 | CBet82%且尺度焊死74-75%(范围合并:顶对/空气/弱对同尺度) |
-          翻后raise率1.7%(=怪物或大听) | bet-fold倾向(#146/#180被反加即弃) | 河大注=成牌 */
+/* 参数标定依据 828 手跨场真人数据（8-05/06/07 三场合并, 详见 原则体系v2.md D表）:
+   Terry(588手): VPIP70-76/PFR~20/Limp29/翻前弃26% | 翻牌中位63%[50,80] 转牌74 | 河牌炸弹中位100%且≥90%占64%,
+          被跟到摊牌31次=15价值/16落空听牌(五五极化) | 河面对注弃51%(唯一会弃的街) | limp-reraise已知5例全AA/KK/AK/55
+   嗯哼(776手): VPIP42-48/3B12-15/F3B=1/38 | 转牌主战街(主动率45vs翻牌28) | 河牌主动率仅14%且下注12/12全胜=坚果 |
+          翻后raise=顶对+或组合听牌混合(已知7次含2次draw半诈唬) | 河面对注弃54%
+   yq(417手): VPIP43-48/3B升到18 | 三场翻后仅raise3次,河牌raise=0(任何raise=最纯坚果) | 转牌中位42%小注=弱 |
+          翻牌尺度两极(≤40%占35,≥90%占33) | 河牌下注7/7=价值 | FvCB从69塌到10(被打服后死黏)
+   高进(423手): VPIP30-45/3B从8飙到34/翻前要么弃(60%)要么加,几乎不call | 翻牌主动率53%配49%中位小stab |
+          河牌弃仅32%+河raise率14%(全桌最高) | 超池≥110%=葫芦(2/2), 平池100%极化含诈唬(已知8次含2次被抓) |
+   xiao(=xiao2同一人,327手): VPIP~53/PFR~12/Limp~23/3B~8 | 尺度全街焊死75%pot(四分位[71,75],零尺度信息) |
+          CBet~78 | 翻后raise≈0(5次/327手) | 翻前只弃~40% 转牌弃~40% 黏池高W$SD | 河大注=成牌 */
 const PROFILES={
   Terry:{openChen:3.2,openRand:0.62,pfrShare:0.32,alwaysRaiseChen:10,canLimp:true,trapAA:true,bigOpen:false,openJitter:9,
     threeBetChen:5.5,threeBetFreq:0.5,callChen:2.8,sizeElastic:0.08,call3Chen:6,sticky3:0.55,
-    cbet:0.47,stab:0.30,semibluff:0.5,drawRaise:0.25,wildDraw:true,valueBetAt:0.55,riverValueAt:0.58,riverBluff:0.22,
-    slack:0.0,riverTighten:0.10,bigBetTighten:0.20,raiseAt:0.76,raiseFreq:0.5,riverBigCallAt:0.75,drawWeight:1.35,
+    cbet:0.47,stab:0.30,semibluff:0.5,drawRaise:0.25,wildDraw:true,valueBetAt:0.55,riverValueAt:0.55,riverBluff:0.32,
+    slack:0.0,riverTighten:0.14,bigBetTighten:0.20,raiseAt:0.76,raiseFreq:0.5,riverBigCallAt:0.75,drawWeight:1.35,
     bluffRaise:0.05,
-    size:(A,st)=>st==='flop'?0.15+Math.random()*0.35:st==='turn'?0.5+Math.random()*0.5:(A.score>=0.8||A.score<0.35?1.0+Math.random()*1.8:0.5+Math.random()*0.3)},
+    /* 翻牌中位63转牌74; 河牌=炸弹街(中位100,≥90%占64,价值与落空听牌五五极化→riverBluff抬到0.28) */
+    size:(A,st)=>st==='flop'?0.45+Math.random()*0.35:st==='turn'?0.5+Math.random()*0.3:(A.score>=0.8||A.score<0.35?0.9+Math.random()*0.9:0.5+Math.random()*0.3)},
   '嗯哼':{openChen:6.0,openRand:0.25,pfrShare:0.6,alwaysRaiseChen:9,canLimp:true,trapAA:false,bigOpen:false,openJitter:6,
-    threeBetChen:6,threeBetFreq:0.6,callChen:3.8,sizeElastic:0.2,call3Chen:5.5,sticky3:0.9,
-    cbet:0.48,stab:0.15,turnAggro:0.30,semibluff:0.55,drawRaise:0.22,wildDraw:true,valueBetAt:0.58,riverValueAt:0.62,riverBluff:0.06,
-    slack:-0.10,flopFloat:0.06,turnTighten:0.08,riverTighten:0.22,bigBetTighten:0.22,raiseAt:0.80,raiseFreq:0.4,riverBigCallAt:0.60,drawWeight:1.1,
+    threeBetChen:6,threeBetFreq:0.6,callChen:3.8,sizeElastic:0.2,call3Chen:5,sticky3:0.97,
+    cbet:0.48,stab:0.15,turnAggro:0.30,semibluff:0.55,drawRaise:0.22,wildDraw:true,valueBetAt:0.58,riverValueAt:0.74,riverBluff:0.04,
+    slack:-0.10,flopFloat:0.06,turnTighten:0.08,riverTighten:0.12,bigBetTighten:0.22,raiseAt:0.80,raiseFreq:0.4,riverBigCallAt:0.60,drawWeight:1.1,
+    /* F3B=1/38→sticky3拉满; 河牌主动率仅14%且bet=坚果→riverValueAt抬到0.74,riverBluff压到0.04 */
     bluffRaise:0.05,size:(A,st)=>st==='turn'?0.72+Math.random()*0.06:0.5+Math.random()*0.3},
-  '高进':{openChen:6.5,openRand:0.12,pfrShare:1.0,alwaysRaiseChen:6.5,canLimp:false,trapAA:false,bigOpen:true,
-    threeBetChen:7.5,threeBetFreq:0.55,callChen:6.8,sizeElastic:0.3,call3Chen:7,sticky3:0.9,
-    cbet:0.72,stab:0.40,semibluff:0.3,drawRaise:0.08,valueBetAt:0.62,riverValueAt:0.76,riverBluff:0.03,
-    slack:-0.02,riverTighten:0.16,bigBetTighten:0.16,raiseAt:0.78,raiseFreq:0.55,riverBigCallAt:0.62,drawWeight:1.0,
+  '高进':{openChen:6.5,openRand:0.22,pfrShare:1.0,alwaysRaiseChen:6.5,canLimp:false,trapAA:false,bigOpen:true,
+    threeBetChen:6,threeBetFreq:0.75,callChen:6.8,sizeElastic:0.3,call3Chen:7,sticky3:0.9,
+    cbet:0.78,stab:0.5,semibluff:0.3,drawRaise:0.08,valueBetAt:0.62,riverValueAt:0.72,riverBluff:0.10,
+    slack:-0.02,riverTighten:0.02,bigBetTighten:0.16,raiseAt:0.78,raiseFreq:0.55,riverBigCallAt:0.62,drawWeight:1.0,
     bluffRaise:0.06,
-    size:(A,st)=>st==='flop'?0.5:(A.score>=0.75?1.0+Math.random()*0.35:0.5)},
-  xiao:{openChen:5.4,openRand:0.24,pfrShare:0.45,alwaysRaiseChen:10.5,canLimp:true,trapAA:false,bigOpen:false,
-    threeBetChen:9,threeBetFreq:0.25,callChen:3.6,sizeElastic:0.10,call3Chen:6,sticky3:0.95,
-    cbet:0.82,stab:0.32,semibluff:0.35,drawRaise:0.05,wildDraw:true,valueBetAt:0.50,riverValueAt:0.55,riverBluff:0.08,
-    slack:0.0,riverTighten:0.18,bigBetTighten:0.12,raiseAt:0.85,raiseFreq:0.15,riverBigCallAt:0.50,drawWeight:1.0,
+    /* 3B从8%飙到34%→threeBetChen降/freq升; 河牌弃仅32%→riverTighten砍到0.02; 超池=葫芦,平池极化含诈唬 */
+    size:(A,st)=>st==='flop'?0.5:st==='turn'?(0.5+Math.random()*0.25):(A.score>=0.9?1.1+Math.random()*0.3:A.score>=0.75||A.score<0.35?1.0:0.5+Math.random()*0.25)},
+  xiao:{openChen:5.4,openRand:0.30,pfrShare:0.25,alwaysRaiseChen:10.5,canLimp:true,trapAA:false,bigOpen:false,
+    threeBetChen:8,threeBetFreq:0.35,callChen:3.6,sizeElastic:0.10,call3Chen:6,sticky3:0.95,
+    cbet:0.78,stab:0.32,semibluff:0.35,drawRaise:0.05,wildDraw:true,valueBetAt:0.50,riverValueAt:0.55,riverBluff:0.08,
+    slack:-0.05,riverTighten:0.02,bigBetTighten:0.12,raiseAt:0.85,raiseFreq:0.15,riverBigCallAt:0.50,drawWeight:1.0,
     bluffRaise:0.02,
+    /* 并入xiao2(同一人,327手): VPIP升~53/PFR降~12/更黏(slack-0.03,河弃收窄); 尺度焊死75%不变 */
     size:()=>0.72+Math.random()*0.06},
-  yq:{openChen:5.8,openRand:0.22,pfrShare:0.45,alwaysRaiseChen:8.5,canLimp:true,trapAA:false,bigOpen:false,
-    threeBetChen:9.2,threeBetFreq:0.5,callChen:4.8,sizeElastic:0.22,call3Chen:7,sticky3:0.3,
-    cbet:0.41,stab:0.25,semibluff:0.35,drawRaise:0.08,valueBetAt:0.62,riverValueAt:0.70,riverBluff:0.04,
-    slack:0.05,bigBetTighten:0.14,raiseAt:0.80,raiseFreq:0.55,riverBigCallAt:0.66,drawWeight:1.0,
-    bluffRaise:0.04,
-    size:(A,st)=>0.5+Math.random()*0.3},
+  yq:{openChen:5.8,openRand:0.28,pfrShare:0.55,alwaysRaiseChen:8.5,canLimp:true,trapAA:false,bigOpen:false,
+    threeBetChen:7,threeBetFreq:0.55,callChen:4.2,sizeElastic:0.22,call3Chen:7,sticky3:0.3,
+    cbet:0.41,stab:0.25,semibluff:0.35,drawRaise:0.02,valueBetAt:0.62,riverValueAt:0.70,riverBluff:0.04,
+    slack:-0.02,bigBetTighten:0.14,raiseAt:0.90,raiseFreq:0.05,riverBigCallAt:0.66,drawWeight:1.0,
+    bluffRaise:0.01,
+    /* 三场翻后仅raise3次→raiseFreq砍到0.05且raiseAt0.9(raise=最纯坚果); FvCB塌到10→slack转负(死黏);
+       3B升到18→threeBetChen降; 尺度分层: 转牌小注42%=弱, 强牌/河牌开大=价值 */
+    size:(A,st)=>st==='turn'?0.32+Math.random()*0.18:(A.score>=0.75?0.85+Math.random()*0.3:0.35+Math.random()*0.25)},
 };
 /* ============ 玩家与状态 ============ */
 const BBAMT=6,SBAMT=3,BUYIN=2000;
@@ -527,7 +550,8 @@ async function bettingRound(startIdx,st){
       dec=st==='preflop'
         ?brain.pre(p,{bb:BBAMT,currentBet,toCall,stack:p.stack,raises:raisesCount,limpers,callers:callersSinceRaise,late})
         :brain.post(p,{street:st,board,toCall,pot,currentBet,stack:p.stack,bb:BBAMT,
-            isAggressor:lastAggrPrev===p,numActive:activeP().length,betRatio,canRaise});
+            isAggressor:lastAggrPrev===p,numActive:activeP().length,betRatio,canRaise,
+            facedRaise:!!(lastAggr&&lastAggr.isRaise)});
     }
     /* 规范化决策为合法动作 */
     let a=dec.a,to=dec.to||0;
@@ -569,7 +593,7 @@ async function bettingRound(startIdx,st){
         feed(`${p.nm} ${currentBet===0?'下注':'加注到'} ${to}${p.allin?'（全下）':''}`,p.isHero?'me':'');
         p.lastAct=(currentBet===0?'下注':'加注')+to;
         if(addAmt>=minRaise){minRaise=addAmt;players.forEach(q=>{if(q!==p)q.acted=false;});}
-        lastAggr={p,addAmt:to-(currentBet===0?0:currentBet),potBefore:potB4-(to-p.streetInv>0?0:0)};
+        lastAggr={p,addAmt:to-(currentBet===0?0:currentBet),potBefore:potB4-(to-p.streetInv>0?0:0),isRaise:currentBet>0};
         lastAggr.potBefore=potB4;
         currentBet=to;p.acted=true;
         if(st==='preflop'){raisesCount++;callersSinceRaise=0;}
