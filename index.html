@@ -264,15 +264,22 @@ function makeBrain(P){
         if(pocket&&ctx.stack/Math.max(ctx.toCall,1)>=13)return{a:'call'};
         return{a:'fold'};
       }
-      /* 面对3bet+：这桌几乎没人弃(F3B≈16%)——但黏性只在常规尺度(≤18bb)成立。
-         超常规尺度按牌力×价格收紧: 每超1bb门槛+0.25 chen(30bb挤压≈JJ/AK+, 60bb+≈KK+),
-         上限cap在15(KK/AA对任何尺度都能继续); 杂牌sticky兜底仅限≤18bb
-         (修: 曾出现K3o/QJo冷跟100bb 4bet挤压) */
-      const penalty3=Math.max(0,bbm-12)*0.25;
+      /* 面对3bet+：必须区分两种场景(828手实测弃牌率差一个数量级)——
+         A) 自己开池被3bet(=F3B口径): 嗯哼5% Terry31% yq29% 高进12% xiao0% → sticky3(黏)
+         B) 冷面对3bet+(非开池者): 嗯哼64% Terry70% yq90% 高进75% xiao63% → coldStick(紧)
+         另: 超常规尺度按牌力×价格收紧, 每超12bb部分每bb门槛+0.25(cap15, KK/AA任何尺度可继续),
+         杂牌兜底仅限≤18bb (修: 曾用K3o/QJo冷跟100bb 4bet挤压) */
+      const cold=!ctx.isOpener;
+      /* 价格闸按场景分: 开池者被3bet的常规尺度天然更大(大开池者可到20bb+), 起算点18bb/闸门30bb;
+         冷面对按12bb/18bb。任何场景超大尺度门槛都cap在15(=KK+), 挡住100bb挤压 */
+      const free=cold?12:18, gate=cold?18:30;
+      const penalty3=Math.max(0,bbm-free)*0.25;
       if(c>=12&&Math.random()<0.5)return{a:'raise',to:Math.round(ctx.currentBet*2.6)};
-      if(c>=Math.min(P.call3Chen+penalty3,15))return{a:'call'};
+      const need=Math.min((cold?P.call3Chen+2.5:P.call3Chen)+penalty3,15);
+      if(c>=need)return{a:'call'};
       if(pocket&&ctx.stack/Math.max(ctx.toCall,1)>=13)return{a:'call'};
-      return bbm<=18&&Math.random()<P.sticky3?{a:'call'}:{a:'fold'};
+      const stick=cold?(P.coldStick??0.12):P.sticky3;
+      return bbm<=gate&&Math.random()<stick?{a:'call'}:{a:'fold'};
     },
     post(p,ctx){
       const A=analyze(p.hole,ctx.board);
@@ -339,34 +346,34 @@ function makeBrain(P){
           CBet~78 | 翻后raise≈0(5次/327手) | 翻前只弃~40% 转牌弃~40% 黏池高W$SD | 河大注=成牌 */
 const PROFILES={
   Terry:{openChen:3.2,openRand:0.62,pfrShare:0.32,alwaysRaiseChen:10,canLimp:true,trapAA:true,bigOpen:false,openJitter:9,
-    threeBetChen:5.5,threeBetFreq:0.5,callChen:2.8,sizeElastic:0.08,call3Chen:6,sticky3:0.55,
+    threeBetChen:5.5,threeBetFreq:0.5,callChen:2.8,sizeElastic:0.08,call3Chen:6,sticky3:0.55,coldStick:0.32,
     cbet:0.47,stab:0.30,semibluff:0.5,drawRaise:0.25,wildDraw:true,valueBetAt:0.55,riverValueAt:0.55,riverBluff:0.32,
     slack:0.0,riverTighten:0.14,bigBetTighten:0.20,raiseAt:0.76,raiseFreq:0.5,riverBigCallAt:0.75,drawWeight:1.35,
     bluffRaise:0.05,
     /* 翻牌中位63转牌74; 河牌=炸弹街(中位100,≥90%占64,价值与落空听牌五五极化→riverBluff抬到0.28) */
     size:(A,st)=>st==='flop'?0.45+Math.random()*0.35:st==='turn'?0.5+Math.random()*0.3:(A.score>=0.8||A.score<0.35?0.9+Math.random()*0.9:0.5+Math.random()*0.3)},
   '嗯哼':{openChen:6.0,openRand:0.25,pfrShare:0.6,alwaysRaiseChen:9,canLimp:true,trapAA:false,bigOpen:false,openJitter:6,
-    threeBetChen:6,threeBetFreq:0.6,callChen:3.8,sizeElastic:0.2,call3Chen:5,sticky3:0.97,
+    threeBetChen:6,threeBetFreq:0.6,callChen:3.8,sizeElastic:0.2,call3Chen:5,sticky3:0.97,coldStick:0.38,
     cbet:0.48,stab:0.15,turnAggro:0.30,semibluff:0.55,drawRaise:0.22,wildDraw:true,valueBetAt:0.58,riverValueAt:0.74,riverBluff:0.04,
     slack:-0.10,flopFloat:0.06,turnTighten:0.08,riverTighten:0.12,bigBetTighten:0.22,raiseAt:0.80,raiseFreq:0.4,riverBigCallAt:0.60,drawWeight:1.1,
     /* F3B=1/38→sticky3拉满; 河牌主动率仅14%且bet=坚果→riverValueAt抬到0.74,riverBluff压到0.04 */
     bluffRaise:0.05,size:(A,st)=>st==='turn'?0.72+Math.random()*0.06:0.5+Math.random()*0.3},
   '高进':{openChen:6.5,openRand:0.22,pfrShare:1.0,alwaysRaiseChen:6.5,canLimp:false,trapAA:false,bigOpen:true,
-    threeBetChen:6,threeBetFreq:0.75,callChen:6.8,sizeElastic:0.3,call3Chen:7,sticky3:0.9,
+    threeBetChen:6,threeBetFreq:0.75,callChen:6.8,sizeElastic:0.3,call3Chen:7,sticky3:0.9,coldStick:0.12,
     cbet:0.78,stab:0.5,semibluff:0.3,drawRaise:0.08,valueBetAt:0.62,riverValueAt:0.72,riverBluff:0.10,
     slack:-0.02,riverTighten:0.02,bigBetTighten:0.16,raiseAt:0.78,raiseFreq:0.55,riverBigCallAt:0.62,drawWeight:1.0,
     bluffRaise:0.06,
     /* 3B从8%飙到34%→threeBetChen降/freq升; 河牌弃仅32%→riverTighten砍到0.02; 超池=葫芦,平池极化含诈唬 */
     size:(A,st)=>st==='flop'?0.5:st==='turn'?(0.5+Math.random()*0.25):(A.score>=0.9?1.1+Math.random()*0.3:A.score>=0.75||A.score<0.35?1.0:0.5+Math.random()*0.25)},
-  xiao:{openChen:5.4,openRand:0.30,pfrShare:0.25,alwaysRaiseChen:10.5,canLimp:true,trapAA:false,bigOpen:false,
-    threeBetChen:8,threeBetFreq:0.35,callChen:3.6,sizeElastic:0.10,call3Chen:6,sticky3:0.95,
+  xiao:{openChen:5.4,openRand:0.30,pfrShare:0.34,alwaysRaiseChen:10.5,canLimp:true,trapAA:false,bigOpen:false,
+    threeBetChen:8,threeBetFreq:0.35,callChen:3.6,sizeElastic:0.10,call3Chen:6,sticky3:0.95,coldStick:0.32,
     cbet:0.78,stab:0.32,semibluff:0.35,drawRaise:0.05,wildDraw:true,valueBetAt:0.50,riverValueAt:0.55,riverBluff:0.08,
     slack:-0.05,riverTighten:0.02,bigBetTighten:0.12,raiseAt:0.85,raiseFreq:0.15,riverBigCallAt:0.50,drawWeight:1.0,
     bluffRaise:0.02,
     /* 并入xiao2(同一人,327手): VPIP升~53/PFR降~12/更黏(slack-0.03,河弃收窄); 尺度焊死75%不变 */
     size:()=>0.72+Math.random()*0.06},
   yq:{openChen:5.8,openRand:0.28,pfrShare:0.55,alwaysRaiseChen:8.5,canLimp:true,trapAA:false,bigOpen:false,
-    threeBetChen:7,threeBetFreq:0.55,callChen:4.2,sizeElastic:0.22,call3Chen:7,sticky3:0.3,
+    threeBetChen:7,threeBetFreq:0.55,callChen:4.2,sizeElastic:0.22,call3Chen:7,sticky3:0.5,coldStick:0.03,
     cbet:0.41,stab:0.25,semibluff:0.35,drawRaise:0.02,valueBetAt:0.62,riverValueAt:0.70,riverBluff:0.04,
     slack:-0.02,bigBetTighten:0.14,raiseAt:0.90,raiseFreq:0.05,riverBigCallAt:0.66,drawWeight:1.0,
     bluffRaise:0.01,
@@ -524,7 +531,7 @@ async function playHand(){
 }
 async function bettingRound(startIdx,st){
   let idx=startIdx,guard=0;
-  let raisesCount=st==='preflop'?0:0,limpers=0,callersSinceRaise=0,lastAggr=null;
+  let raisesCount=st==='preflop'?0:0,limpers=0,callersSinceRaise=0,lastAggr=null,pfOpener=null;
   while(guard++<300){
     if(activeP().length<=1)return;
     const need=players.filter(p=>!p.folded&&!p.allin&&(p.streetInv<currentBet||!p.acted));
@@ -548,7 +555,8 @@ async function bettingRound(startIdx,st){
       const brain=p.brain||makeBrain(PROFILES.yq);
       const late=[dealerIdx,(dealerIdx+5)%6].includes(players.indexOf(p));
       dec=st==='preflop'
-        ?brain.pre(p,{bb:BBAMT,currentBet,toCall,stack:p.stack,raises:raisesCount,limpers,callers:callersSinceRaise,late})
+        ?brain.pre(p,{bb:BBAMT,currentBet,toCall,stack:p.stack,raises:raisesCount,limpers,callers:callersSinceRaise,late,
+            isOpener:pfOpener===p})
         :brain.post(p,{street:st,board,toCall,pot,currentBet,stack:p.stack,bb:BBAMT,
             isAggressor:lastAggrPrev===p,numActive:activeP().length,betRatio,canRaise,
             facedRaise:!!(lastAggr&&lastAggr.isRaise)});
@@ -596,7 +604,7 @@ async function bettingRound(startIdx,st){
         lastAggr={p,addAmt:to-(currentBet===0?0:currentBet),potBefore:potB4-(to-p.streetInv>0?0:0),isRaise:currentBet>0};
         lastAggr.potBefore=potB4;
         currentBet=to;p.acted=true;
-        if(st==='preflop'){raisesCount++;callersSinceRaise=0;}
+        if(st==='preflop'){if(raisesCount===0)pfOpener=p;raisesCount++;callersSinceRaise=0;}
         lastAggrPrev=p;
       }
     }
